@@ -214,16 +214,16 @@ eeg = cfg_menu;
 eeg.tag = 'eeg';
 eeg.name = 'EEG head model';
 eeg.help = {'Select the head model type to use for EEG (if present)'};
-eeg.labels = {'EEG BEM', '3-Shell Sphere'};
-eeg.values = {'EEG BEM', '3-Shell Sphere'};
+eeg.labels = {'EEG BEM', '3-Shell Sphere','OpenMEEG BEM'};
+eeg.values = {'EEG BEM', '3-Shell Sphere','EEG OpenMEEG BEM'};
 eeg.val = {'EEG BEM'};
 
 meg = cfg_menu;
 meg.tag = 'meg';
 meg.name = 'MEG head model';
 meg.help = {'Select the head model type to use for MEG (if present)'};
-meg.labels = {'Single Sphere', 'MEG Local Spheres', 'Single Shell'};
-meg.values = {'Single Sphere', 'MEG Local Spheres', 'Single Shell'};
+meg.labels = {'Single Sphere', 'MEG Local Spheres', 'Single Shell','OpenMEEG BEM'};
+meg.values = {'Single Sphere', 'MEG Local Spheres', 'Single Shell','MEG OpenMEEG BEM'};
 meg.val = {'Single Shell'};
 
 forward = cfg_branch;
