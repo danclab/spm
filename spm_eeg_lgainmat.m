@@ -124,21 +124,40 @@ catch
                     end
                 end
             else
-                Gxyz = zeros(nvert, length(forward(ind).channels),3);
-                
-                parfor i = 1:nvert
-                    
-                    
-                    if siunits
-                        Gxyz(i,:,:)  = ft_compute_leadfield(vert(i, :), sens, vol,...
-                            'dipoleunit', 'nA*m', 'chanunit', units);
-                    else
-                        Gxyz(i,:,:)  = ft_compute_leadfield(vert(i, :), sens, vol);
+                if isequal(ft_headmodeltype(vol),'openmeeg')
+                    Gxyz = zeros(length(forward(ind).channels), 3*nvert);
+                    chunksz = 50000;
+                    for i0 = 1:chunksz:nvert
+                        i1      = min(i0 + chunksz - 1, nvert);
+                        dippos  = vert(i0:i1, :);  % (Nchunk x 3)
+
+                        if siunits
+                            lf_chunk = ft_compute_leadfield(dippos, sens, vol, ...
+                                                            'dipoleunit', 'nA*m', ...
+                                                            'chanunit',  units);
+                        else
+                            lf_chunk = ft_compute_leadfield(dippos, sens, vol);
+                        end
+
+                        Gxyz(:, (3*i0 - 2):(3*i1)) = lf_chunk;
+
+                        if ~isempty(Ibar)
+                            spm_progress_bar('Set', i1);
+                        end
                     end
-                end
-                
-                Gxyz=shiftdim(Gxyz,1);
-                Gxyz=reshape(Gxyz,length(forward(ind).channels),3*nvert);
+                else
+                    Gxyz = zeros(nvert, length(forward(ind).channels),3);
+                    parfor i = 1:nvert
+                        if siunits
+                            Gxyz(i,:,:)  = ft_compute_leadfield(vert(i, :), sens, vol,...
+                                'dipoleunit', 'nA*m', 'chanunit', units);
+                        else
+                            Gxyz(i,:,:)  = ft_compute_leadfield(vert(i, :), sens, vol);
+                        end
+                    end                    
+                    Gxyz=shiftdim(Gxyz,1);
+                    Gxyz=reshape(Gxyz,length(forward(ind).channels),3*nvert);
+                end                
             end
         else
             if siunits
