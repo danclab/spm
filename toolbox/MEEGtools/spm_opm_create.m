@@ -144,7 +144,9 @@ else
         end
     end
 end
-
+for c=1:length(channels.type)
+    channels.type{c}='MEG';
+end
 
 
 %- Check for MEG Info
