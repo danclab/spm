@@ -203,6 +203,9 @@ parfor w_idx=1:size(woi,1)
         process_woi(D, val, w_idx, woi, A, UL, QG, Is, Ns, Ip, Np, QE, Qe0, type, Nm, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic);
 end
 
+if size(woi,1)>1
+    inverse.M_win={};
+end
 % Combine results from parallel processing
 for w_idx=1:size(woi,1)
     if w_idx == 1
@@ -233,8 +236,10 @@ for w_idx=1:size(woi,1)
     inverse.F(w_idx)   = F(w_idx);
     inverse.R2(w_idx)  = R2(w_idx);
     inverse.VE(w_idx)  = R2(w_idx).*VE(w_idx);
+    if size(woi,1)>1
+        inverse.M_win{w_idx}=M_temp{w_idx};
+    end
 end
-
 inverse.woi    = woi;
 inverse.Ip     = Ip;
 inverse.modality = modalities;
