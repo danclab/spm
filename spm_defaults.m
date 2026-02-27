@@ -33,7 +33,7 @@ defaults.cmdline  = 0;
 
 % Parallelisation default
 %==========================================================================
-defaults.use_parfor  = 0;
+defaults.use_parfor  = 1;
 
 % User Interface defaults
 %==========================================================================
@@ -50,7 +50,7 @@ defaults.renderer   = 'opengl';
 % spm_flip_analyze_images.m
 defaults.images.format  = 'nii'; % options: 'img', 'nii'
 defaults.images.tol_orient = 1e-4; % tolerance (see spm_check_orientation)
-defaults.mat.format     = '-v6'; % options: '-mat', '-v6', '-v7.0', '-v7.3'
+defaults.mat.format     = '-v7.3'; % options: '-mat', '-v6', '-v7.0', '-v7.3'
 
 % Toolboxes defaults
 %==========================================================================
