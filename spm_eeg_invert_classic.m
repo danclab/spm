@@ -34,7 +34,8 @@ try, Ip   = inverse.Ip;     catch, Ip   = [];       end
 try, QE    = inverse.QE;     catch,  QE=1;          end
 try, Qe0   = inverse.Qe0;     catch, Qe0   = exp(-5);       end
 try, inverse.A;     catch, inverse.A   = [];       end
-try, SHUFFLELEADS=inverse.SHUFFLELEADS;catch, SHUFFLELEADS=0;end;
+try, SHUFFLELEADS=inverse.SHUFFLELEADS;catch, SHUFFLELEADS=0;end
+try, nlayers = inverse.nlayers; catch, nlayers = 1; end
 
 type = inverse.type;
 
@@ -200,7 +201,9 @@ parfor w_idx=1:size(woi,1)
     [F(w_idx), R2(w_idx), VE(w_idx), J_temp{w_idx}, M_temp{w_idx}, Cq_temp{w_idx}, ...
      U_temp{w_idx}, V_temp{w_idx}, Vq_temp{w_idx}, S_temp{w_idx}, It_temp{w_idx}, ...
      Ik_temp{w_idx}, ID_temp{w_idx}, pst_temp{w_idx}, dct_temp{w_idx}] = ...
-        process_woi(D, val, w_idx, woi, A, UL, QG, Is, Ns, Ip, Np, QE, Qe0, type, Nm, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic);
+        process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE,...
+            Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic,...
+            vert, nlayers);
 end
 
 if size(woi,1)>1
@@ -256,7 +259,7 @@ end
 
 function [F_out, R2_out, VE_out, J_out, M_out, Cq_out, U_out, V_out, Vq_out, ...
           S_out, It_out, Ik_out, ID_out, pst_out, dct_out] = ...
-    process_woi(D, val, w_idx, woi, A, UL, QG, Is, Ns, Ip, Np, QE, Qe0, type, Nm, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic)
+    process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE, Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic, vert, nlayers)
 
 % This function processes a single time window of interest (woi)
 w = woi(w_idx,:);
@@ -420,7 +423,7 @@ switch(type)
         
         Qp{1} = diag(allsource);
         LQpL{1} = UL*diag(allsource)*UL';
-        
+    
     case {'EBBcorr'}
         disp('NB smooth correlated source EBB algorithm !');
         InvCov = spm_inv(AYYA);
@@ -460,6 +463,156 @@ switch(type)
         
         Qp{1} = diag(allsource);
         LQpL{1} = UL*diag(allsource)*UL';
+        
+    case {'EBBlayer'}
+        disp('NB smooth correlated source EBB algorithm !');
+
+        InvCov = spm_inv(AYYA);
+
+        % Numerical safety thresholds
+        tiny = 1e-30;
+
+        % ---------------------------------------------------------------------
+        % 1) Independent (classic EBB) diagonal component
+        % ---------------------------------------------------------------------
+        ind_source = sparse(Ns,1);
+        for bk = 1:Ns
+            q = QG(:,bk);
+
+            smthlead = UL*q;
+            den = smthlead' * smthlead;
+            if ~(isfinite(den) && den > tiny)
+                continue;
+            end
+            normpower = 1/den;
+
+            num = smthlead' * InvCov * smthlead;
+            if ~(isfinite(num) && num > tiny)
+                continue;
+            end
+            srcpow = 1/num;
+
+            val = srcpow ./ normpower;
+            if isfinite(val) && val > 0
+                ind_source(bk) = val;
+            end
+        end
+
+        % ---------------------------------------------------------------------
+        % 2) Correlated families: sum (+) and difference (-)
+        %    We accumulate onto diagonal weights for each vertex.
+        % ---------------------------------------------------------------------
+        corr_sum  = sparse(Ns,1);
+        corr_diff = sparse(Ns,1);
+
+        % Layer-paired version: pair within a cortical location across layers
+        vert_per_layer = length(vert)/nlayers;
+        if abs(vert_per_layer - round(vert_per_layer)) > eps
+            error('length(vert) must be divisible by nlayers.');
+        end
+        vert_per_layer = round(vert_per_layer);
+
+        nPairs = nlayers*(nlayers-1)/2;
+        layer_pairs = zeros(nPairs,2);
+        c = 0;
+        for a = 1:nlayers-1
+            for b = a+1:nlayers
+                c = c + 1;
+                layer_pairs(c,:) = [a b];
+            end
+        end
+
+        for bk = 1:vert_per_layer
+            for p = 1:size(layer_pairs,1)
+
+                la = layer_pairs(p,1);
+                lb = layer_pairs(p,2);
+
+                idx_a = (la-1)*vert_per_layer + bk;
+                idx_b = (lb-1)*vert_per_layer + bk;
+
+                % -------------------------
+                % SUM family: q = a + b
+                % -------------------------
+                qsum = (QG(:,idx_a) + QG(:,idx_b));
+                smthlead = UL*qsum;
+
+                den = smthlead' * smthlead;
+                if (isfinite(den) && den > tiny)
+                    normpower = 1/den;
+
+                    num = smthlead' * InvCov * smthlead;
+                    if (isfinite(num) && num > tiny)
+                        dualpow = 1/num;
+                        val = dualpow / (normpower * 4);
+
+                        if isfinite(val) && val > 0
+                            corr_sum(idx_a) = corr_sum(idx_a) + val;
+                            corr_sum(idx_b) = corr_sum(idx_b) + val;
+                        end
+                    end
+                end
+
+                % -------------------------
+                % DIFF family: q = a - b
+                % -------------------------
+                qdiff = (QG(:,idx_a) - QG(:,idx_b));
+                smthlead = UL*qdiff;
+
+                den = smthlead' * smthlead;
+                if (isfinite(den) && den > tiny)
+                    normpower = 1/den;
+
+                    num = smthlead' * InvCov * smthlead;
+                    if (isfinite(num) && num > tiny)
+                        dualpow = 1/num;
+                        val = dualpow / (normpower * 4);
+
+                        if isfinite(val) && val > 0
+                            corr_diff(idx_a) = corr_diff(idx_a) + val;
+                            corr_diff(idx_b) = corr_diff(idx_b) + val;
+                        end
+                    end
+                end
+            end
+        end
+        
+        % ---------------------------------------------------------------------
+        % Clean + normalise each component separately (so ReML scales are sane)
+        % ---------------------------------------------------------------------
+        ind_source(~isfinite(ind_source)) = 0;
+        corr_sum(~isfinite(corr_sum))     = 0;
+        corr_diff(~isfinite(corr_diff))   = 0;
+
+        mx = max(ind_source);
+        if mx > 0 && isfinite(mx), ind_source = ind_source / mx; end
+
+        mx = max(corr_sum);
+        if mx > 0 && isfinite(mx), corr_sum = corr_sum / mx; end
+
+        mx = max(corr_diff);
+        if mx > 0 && isfinite(mx), corr_diff = corr_diff / mx; end
+
+        % ---------------------------------------------------------------------
+        % Provide three spatial source priors to ReML
+        % ---------------------------------------------------------------------
+        Qp    = {};
+        LQpL  = {};
+
+        Qp{1}   = spdiags(ind_source,0,Ns,Ns);
+        LQpL{1} = UL * Qp{1} * UL';
+
+        Qp{2}   = spdiags(corr_sum,0,Ns,Ns);
+        LQpL{2} = UL * Qp{2} * UL';
+
+        Qp{3}   = spdiags(corr_diff,0,Ns,Ns);
+        LQpL{3} = UL * Qp{3} * UL';
+        tr1 = full(sum(spdiags(LQpL{1},0)));
+        tr2 = full(sum(spdiags(LQpL{2},0)));
+        tr3 = full(sum(spdiags(LQpL{3},0)));
+
+        fprintf('trace(LQpL): ind=%.3g, sum=%.3g, diff=%.3g\n', tr1, tr2, tr3);
+        
         
     case {'EBBgs'}
         allsource = zeros(Ntrials,Ns);
@@ -532,13 +685,24 @@ switch(type)
 end
 
 switch(type)
-    case {'IID','MMN','LOR','COH','EBB','EBBcorr'}
+    case {'IID','MMN','LOR','COH','EBB','EBBcorr','EBBlayer'}
         [Cy,h,Ph,F_out] = spm_reml_sc(AYYA,[],[Qe LQpL],Nn,-4,16,Q0);
         
         Ne = length(Qe);
         Np = length(Qp);
         
         hp = h(Ne + (1:Np));
+        if strcmp(type,'EBBlayer')
+            hp_full = full(hp);
+            eff_i = [];
+            for i =1:3
+                tr = full(sum(spdiags(LQpL{i},0)));
+                eff_i(i) = hp_full(i) * tr;
+            end
+            fprintf('hp: ind=%.3g, sum=%.3g, diff=%.3g\n', hp_full(1), hp_full(2), hp_full(3));
+            fprintf('eff_i: ind=%.3g, sum=%.3g, diff=%.3g\n', eff_i(1), eff_i(2), eff_i(3));
+        end
+        
         qp = sparse(0);
         for i = 1:Np
             qp = qp + hp(i)*Qp{i};

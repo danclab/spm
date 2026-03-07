@@ -89,8 +89,8 @@ invtype = cfg_menu;
 invtype.tag = 'invtype';
 invtype.name = 'Inversion type';
 invtype.help = {'Select the desired inversion type'};
-invtype.labels = {'GS', 'ARD', 'MSP (GS+ARD)' 'COH', 'IID','EBB','EBBsparse'};
-invtype.values = {'GS', 'ARD', 'MSP', 'LOR', 'IID','EBB','EBBsparse'};
+invtype.labels = {'GS', 'ARD', 'MSP (GS+ARD)' 'COH', 'IID','EBB','EBBsparse','EBBcorr','EBBlayer'};
+invtype.values = {'GS', 'ARD', 'MSP', 'LOR', 'IID','EBB','EBBsparse','EBBcorr','EBBlayer'};
 invtype.val = {'GS'};
 
 woi = cfg_entry;
@@ -141,7 +141,6 @@ niter.strtype = 'i';
 niter.num = [1 1];
 niter.val = {[8]};
 niter.help = {'Number of iterations'};
-
 
 randpatch = cfg_branch;
 randpatch.tag = 'randpatch';
@@ -267,11 +266,19 @@ restrict.name = 'Restrict solutions';
 restrict.help = {'Restrict solutions to pre-specified VOIs'};
 restrict.val  = {locs, radius};
 
+nlayers = cfg_entry;
+nlayers.tag = 'nlayers';
+nlayers.name = 'Number of mesh layers';
+nlayers.strtype = 'i';
+nlayers.num = [1 1];
+nlayers.val = {[1]};
+nlayers.help = {'Number of mesh layers'};
+
 custom = cfg_branch;
 custom.tag = 'custom';
 custom.name = 'Custom';
 custom.help = {'Define custom settings for the inversion'};
-custom.val  = {invfunc,invtype, woi, foi, hanning,isfixedpatch,patchfwhm,mselect,nsmodes,umodes,ntmodes, priors, restrict,outinv};
+custom.val  = {invfunc,invtype, woi, foi, hanning,isfixedpatch,patchfwhm,mselect,nsmodes,umodes,ntmodes, priors, restrict,outinv, nlayers};
 
 isstandard = cfg_choice;
 isstandard.tag = 'isstandard';
@@ -443,6 +450,9 @@ if isfield(job.isstandard, 'custom')
         inverse.xyz = job.isstandard.custom.restrict.locs;
         inverse.rad = job.isstandard.custom.restrict.radius;
     end
+    
+    inverse.nlayers = job.isstandard.custom.nlayers;
+    
 else %% standard inversion option, empty fields so they will become defaults
     funccall='Current';
     inverse.Np = [];
