@@ -69,7 +69,11 @@ end
 if size(modalities,1)>1
     error('not defined for multiple modalities');
 end
-Ic  = setdiff(D.indchantype(modalities), badchannels(D));
+if strcmp(modalities,'MEG')
+    Ic  = setdiff(union(D.indchantype('MEG'),D.indchantype('MEGPLANAR')), badchannels(D));
+else
+    Ic  = setdiff(D.indchantype(modalities), badchannels(D));
+end
 Nd    = size(L,2);
 
 fprintf(' - done\n')
@@ -191,19 +195,30 @@ end
 R2=zeros(1,size(woi,1));
 VE=zeros(1,size(woi,1));
 
-% Create a parallel pool if one doesn't exist
-if isempty(gcp('nocreate'))
-    parpool;
-end
+if size(woi,1)==1 || ~spm_get_defaults('use_parfor')
+    for w_idx=1:size(woi,1)
+        [F(w_idx), R2(w_idx), VE(w_idx), J_temp{w_idx}, M_temp{w_idx}, Cq_temp{w_idx}, ...
+         U_temp{w_idx}, V_temp{w_idx}, Vq_temp{w_idx}, S_temp{w_idx}, It_temp{w_idx}, ...
+         Ik_temp{w_idx}, ID_temp{w_idx}, pst_temp{w_idx}, dct_temp{w_idx}] = ...
+            process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE,...
+                Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic,...
+                vert, nlayers);
+    end
+else
+    % Create a parallel pool if one doesn't exist
+    if isempty(gcp('nocreate'))
+        parpool;
+    end
 
-% Process each woi in parallel
-parfor w_idx=1:size(woi,1)
-    [F(w_idx), R2(w_idx), VE(w_idx), J_temp{w_idx}, M_temp{w_idx}, Cq_temp{w_idx}, ...
-     U_temp{w_idx}, V_temp{w_idx}, Vq_temp{w_idx}, S_temp{w_idx}, It_temp{w_idx}, ...
-     Ik_temp{w_idx}, ID_temp{w_idx}, pst_temp{w_idx}, dct_temp{w_idx}] = ...
-        process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE,...
-            Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic,...
-            vert, nlayers);
+    % Process each woi in parallel
+    parfor w_idx=1:size(woi,1)
+        [F(w_idx), R2(w_idx), VE(w_idx), J_temp{w_idx}, M_temp{w_idx}, Cq_temp{w_idx}, ...
+         U_temp{w_idx}, V_temp{w_idx}, Vq_temp{w_idx}, S_temp{w_idx}, It_temp{w_idx}, ...
+         Ik_temp{w_idx}, ID_temp{w_idx}, pst_temp{w_idx}, dct_temp{w_idx}] = ...
+            process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE,...
+                Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic,...
+                vert, nlayers);
+    end
 end
 
 if size(woi,1)>1
