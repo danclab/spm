@@ -49,6 +49,9 @@ Nfiles=size(filenames,1);
 D=spm_eeg_load(deblank(filenames(1,:)));
 val=D.val;
 megind=D.indchantype(D.inv{val}.forward.modality);
+if strcmp(D.inv{val}.forward.modality,'MEG')
+    megind=union(megind,D.indchantype('MEGPLANAR'));
+end
 origbadchans=D.badchannels;
 
 megind=setdiff(megind,origbadchans);
