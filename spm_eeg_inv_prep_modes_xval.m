@@ -55,7 +55,7 @@ end
 origbadchans=D.badchannels;
 
 megind=setdiff(megind,origbadchans);
-fprintf('Removed %d bad channels\n',length(origbadchans));
+fprintf('Removed %d bad channels, %d total channels\n',length(origbadchans), length(megind));
 
 newpctest=pctest;
 if round(Nblocks*pctest)==100
