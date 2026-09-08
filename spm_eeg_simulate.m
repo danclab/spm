@@ -80,7 +80,7 @@ if isempty(trialind)
     trialind=1:Dnew.ntrials;
 end
 
-modstr=deblank(modality(D{1}));
+modstr = upper(strtrim(modality(Dnew)));
 fprintf('Simulating data on %s channels only\n',modstr);
 
 if ~isempty(mnimesh)
@@ -116,7 +116,7 @@ end
 
 Ndip = size(simsignal,1);       % Number of dipoles
 
-sensorunits = Dnew.units; %% of sensors (T or fT)
+sensorunits = Dnew.units; %% of sensors (T or fT, V or uV)
 
 try Dnew.inv{val}.forward.vol.unit, %% units of forward model for distance (m or mm)
     switch(Dnew.inv{val}.forward.vol.unit) %% correct for non-SI lead field scaling
@@ -146,42 +146,28 @@ if length(f1ind)~=size(simsignal,2)
     error('Signal does not fit in time window');
 end
 
-%if isequal(modstr, 'MEG')
-try
-    chanind = Dnew.indchantype({'MEG', 'MEGPLANAR'}, 'GOOD');
-catch
-    chanind = Dnew.indchantype(modality(D{1}), 'GOOD');
+switch modstr
+    case 'MEG'
+        chanind = Dnew.indchantype({'MEG', 'MEGPLANAR'}, 'GOOD');
+    case 'EEG'
+        chanind = Dnew.indchantype('EEG', 'GOOD');
+    otherwise
+        error('Unsupported modality: %s', modstr);
 end
-
-
-labels=Dnew.chanlabels(chanind);
-
-
-%chans = Dnew.indchantype(modstr, 'GOOD');
 
 simscale=1.0;
 
-try
-    %% white noise is input in fT or uV so convert it to data sensorunits
-    switch sensorunits{chanind(1)}
-        case 'T'
-            simscale=1e-15; %% convert from fT to T
-        case 'fT'
-            simscale=1.0; %% sensors already in fT
-            %whitenoise=whitenoise; %% rms  Tesla
-            %tmp=tmp;
-        case 'uV'
-            simscale=1.0; %% sensors already in uV
-            error('not supported for EEG at the moment');            
-        case 'V'
-            simscale=1e-6; %% convert from uV to V
-            error('not supported for EEG at the moment');            
-        otherwise
-            error('unknown sensor unit')
-    end
-    
-catch
-    disp('No sensor sensorunits found');
+switch sensorunits{chanind(1)}
+    case 'T'
+        simscale = 1e-15;   % input noise in fT
+    case 'fT'
+        simscale = 1;
+    case 'uV'
+        simscale = 1;       % input noise in uV
+    case 'V'
+        simscale = 1e-6;    % input noise in uV -> V
+    otherwise
+        error('Unknown sensor unit: %s', sensorunits{chanind(1)});
 end
 
 noiseLevel=noiseLevel.*simscale;
@@ -270,8 +256,6 @@ else %%% CURRENT DENSITY ON SURFACE SIMULATION
     
     [Qp,~,priorfname]=spm_eeg_invert_setuppatches(meshsourceind,nativemesh,base,priordir,Qe,L);
     
-    
-
     % Add waveform of all smoothed sources to their equivalent dipoles
     % QGs add up to 0.9854        
     
