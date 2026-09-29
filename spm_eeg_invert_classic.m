@@ -1377,15 +1377,15 @@ switch(type)
         Ne = length(Qe);
         Np = length(Qp);
 
-        % These are the source-family ReML weights we actually care about
-        source_hp = full(h(Ne + (1:Np)));
-        source_hp = source_hp(:);
-
+        hp = h(Ne + (1:Np));
 
         % -------------------------------------------------------------------------
         % Save EBBlayer source-family diagnostics BEFORE the second ReML stage
         % -------------------------------------------------------------------------
         if strcmp(type, 'EBBlayer')
+            % Full copy for diagnostics only
+            source_hp = full(hp);
+            source_hp = source_hp(:);
             EBBlayer_diag_out.labels = {
                 'IND'
                 'SUM'
@@ -1427,7 +1427,7 @@ switch(type)
         % =========================================================================
         qp = sparse(0);
         for i = 1:Np
-            qp = qp + source_hp(i) * Qp{i};
+            qp = qp + hp(i) * Qp{i};
         end
 
         % =========================================================================
@@ -1466,18 +1466,19 @@ end
 Cp = sparse(0);
 LCp = sparse(0);
 
-final_hp = full(h(Ne + (1:Np)));
-final_hp = final_hp(:);
-
+hp = h(Ne + (1:Np));
 
 if strcmp(type, 'EBBlayer')
+    final_hp = full(hp);
+    final_hp = final_hp(:);
+
     EBBlayer_diag_out.hp_final_scale = final_hp;
     EBBlayer_diag_out.final_reml_F = full(F_out);
 end
 
 for j = 1:Np
-    Cp = Cp + final_hp(j) * QP{j};
-    LCp = LCp + final_hp(j) * LQP{j};
+    Cp = Cp + hp(j) * QP{j};
+    LCp = LCp + hp(j) * LQP{j};
 end
 
 M = LCp'/Cy;
