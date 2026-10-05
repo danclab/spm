@@ -1,6 +1,244 @@
 function [D] = spm_eeg_invert_classic(D,val)
-% Parallelized version of spm_eeg_invert_classic
-% This version processes multiple time windows (wois) in parallel
+% SPM-style ReML source inversion for single-subject, single-modality EEG/MEG.
+%
+% This is a streamlined version of spm_eeg_invert designed for comparison
+% between forward/source models. It supports standard SPM source priors as
+% well as laMEG-specific EBB variants, including EBBlayer.
+%
+% Multiple time windows of interest (WOIs) can be inverted independently.
+% When more than one WOI is supplied, windows can be processed in parallel
+% and each full window-specific inverse matrix is written to a separate
+% v7.3 MAT file to keep client RAM use bounded. The first-window outputs are
+% retained in the standard SPM inverse fields for compatibility.
+%
+% FORMAT
+%   D = spm_eeg_invert_classic(D)
+%   D = spm_eeg_invert_classic(D,val)
+%
+% INPUT
+%   D   - SPM M/EEG object containing a forward model
+%   val - inversion index (default: D.val, or 1 if D.val is unset)
+%
+% REQUIRED / OPTIONAL INVERSE SETTINGS
+%
+%   D.inv{val}.inverse:
+%
+%   modality
+%       Modality to invert. This implementation supports one modality only.
+%
+%   trials
+%       Condition/trial types to include in the inversion.
+%
+%   type
+%       Source prior / inversion type:
+%
+%           'GS'       greedy-search MSP
+%           'ARD'      ARD MSP
+%           'MSP'      multiple sparse priors
+%           'LOR'      LORETA-like model
+%           'IID'      minimum-norm / IID model
+%           'EBB'      empirical Bayes beamformer
+%           'EBBcorr'  EBB with correlated interhemispheric sources
+%           'EBBlayer' laminar empirical Bayes beamformer
+%
+%   woi
+%       One or more time windows of interest in milliseconds:
+%
+%           [start stop]
+%
+%       or an n_windows x 2 matrix. If empty, the full dataset time range is
+%       used.
+%
+%   lpf
+%       Lower frequency bound used to select DCT temporal modes (Hz).
+%
+%   hpf
+%       Upper frequency bound used to select DCT temporal modes (Hz).
+%
+%   Han
+%       Apply Hanning windowing within each WOI.
+%
+%   Nm
+%       Number of spatial/channel modes.
+%
+%   Nr
+%       Maximum/default number of temporal modes.
+%
+%   Nt
+%       Fixed number of temporal modes. If empty, the number is determined
+%       from the temporal covariance spectrum.
+%
+%   Np
+%       Number of sparse priors.
+%
+%   smooth
+%       Source-prior smoothing parameter.
+%
+%   sdv
+%       Standard deviation of the Gaussian temporal correlation kernel.
+%
+%   QE
+%       Sensor-error covariance component.
+%
+%   Qe0
+%       Minimum sensor-noise power relative to signal power.
+%
+%   A
+%       Optional predefined spatial projector.
+%
+%   Ip
+%       Optional source-prior indices.
+%
+%   SHUFFLELEADS
+%       Diagnostic option for permuting lead fields.
+%
+%
+% EBBLAYER SETTINGS
+%
+%   nlayers
+%       Number of reconstructed cortical layers in the multilayer source
+%       mesh. Sources must be ordered layer-major, with corresponding
+%       cortical columns occupying the same within-layer vertex index.
+%
+%   EBBlayer_sum_pair_topk
+%       Number of highest-scoring SUM layer-pair hypotheses retained
+%       independently at each cortical column. Default: 2.
+%
+%   EBBlayer_diff_pair_topk
+%       Number of highest-scoring DIFF layer-pair hypotheses retained
+%       independently at each cortical column. Default: 2.
+%
+%   EBBlayer_diag_vertex
+%       Optional one-based within-layer cortical-column index for which
+%       detailed EBBlayer pair-selection diagnostics are retained.
+%
+% EBBLAYER MODEL
+%
+%   EBBlayer constructs three source-covariance families:
+%
+%       IND
+%           Independent single-layer EBB source prior.
+%
+%       SUM
+%           Positive cross-layer covariance. For each layer pair (A,B), the
+%           within-pair mixture
+%
+%               q+(r) = qA + r*qB,  r >= 0
+%
+%           is optimized continuously. Endpoint optima r=0 and r=Inf are
+%           excluded from the SUM family because they are already represented
+%           by IND. The highest-scoring genuine interior SUM hypotheses are
+%           retained using EBBlayer_sum_pair_topk.
+%
+%       DIFF
+%           Fixed equal-magnitude opposite-sign hypothesis
+%
+%               q- = qA - qB
+%
+%           with independent TOP-K selection using
+%           EBBlayer_diff_pair_topk.
+%
+%   The IND, SUM, and DIFF covariance components are subsequently combined
+%   by ReML.
+%
+%
+% OUTPUT / STORED INVERSE FIELDS
+%
+% Standard / first-window compatibility fields:
+%
+%   inverse.M
+%       Reduced MAP source projector for the first WOI.
+%
+%   inverse.J
+%       Conditional source expectation for the first WOI.
+%
+%   inverse.L
+%       Reduced lead field.
+%
+%   inverse.qC
+%       Spatial covariance for the first WOI.
+%
+%   inverse.qV
+%       Temporal covariance for the first WOI.
+%
+%   inverse.T
+%       Temporal projector for the first WOI.
+%
+%   inverse.U
+%       Spatial projector.
+%
+%   inverse.Is
+%       Source indices.
+%
+%   inverse.It
+%       Time indices for the first WOI.
+%
+%   inverse.Ic
+%       Good-channel indices.
+%
+%   inverse.Nd
+%       Number of dipoles/sources.
+%
+%   inverse.pst
+%       Peristimulus times for the first WOI.
+%
+%   inverse.dct
+%       DCT frequencies retained for the first WOI.
+%
+% Per-window summary fields:
+%
+%   inverse.F
+%       Free energy for each WOI.
+%
+%   inverse.R2
+%       Model variance-accounted-for measure for each WOI.
+%
+%   inverse.VE
+%       Variance-explained measure for each WOI.
+%
+% Sliding-window storage (when n_windows > 1):
+%
+%   inverse.M_win_files
+%       Relative paths to the external window-specific inverse matrices.
+%
+%   inverse.M_win_storage
+%       Storage format identifier ('external_per_window_v7.3').
+%
+%   inverse.M_win_variable
+%       Variable name containing the matrix in each external file
+%       ('M_window').
+%
+%   inverse.M_win_dir
+%       Directory containing the external window-specific matrices.
+%
+% EBBlayer diagnostics:
+%
+%   inverse.EBBlayer_diag
+%       EBBlayer diagnostics for the first WOI.
+%
+%   inverse.EBBlayer_diag_win
+%       EBBlayer diagnostics for every WOI when multiple WOIs are used.
+%
+% NOTES
+%
+%   For multiple WOIs, inverse.M is retained only for compatibility with
+%   standard SPM code. Downstream reconstruction of the complete sliding-
+%   window solution should use inverse.M_win_files rather than inverse.M.
+%
+%   Window-specific inverse matrices are stored externally because retaining
+%   all full source x spatial-mode matrices in the main MATLAB process can
+%   require very large amounts of RAM.
+%
+% Jose David Lopez, Gareth Barnes, Vladimir Litvak
+% Original SPM code Copyright (C) 2008-2022
+%
+% Modified for laMEG by James J. Bonaiuto
+% Decision, Action, and Neural Computation (DANC) team
+% Institut des Sciences Cognitives Marc Jeannerod, CNRS
+%
+% laMEG modifications include parallel sliding-window inversion,
+% disk-backed window-specific inverse operators, and EBBlayer.
+%__________________________________________________________________________
 
 Nl = length(D);
 
@@ -193,87 +431,217 @@ fprintf('Using %d spatial modes',Nm)
 Is    = 1:Nd;
 Ns    = length(Is);
 
-F=zeros(1,size(woi,1));
+% =========================================================================
+% Sliding-window inversion
+%
+% For multiple WOIs, storing every full source reconstruction matrix M in
+% memory causes RAM use to scale with the number of windows.  Instead, each
+% window-specific M is written immediately to its own v7.3 MAT file and only
+% the relative filename is retained in the main inverse structure.
+%
+% The first-window M is still retained in inverse.M for compatibility with
+% standard SPM code.  Downstream multi-window reconstruction should use
+% inverse.M_win_files and stream one matrix at a time.
+% =========================================================================
 
 if isempty(woi)
     woi = 1000*[min(D.time) max(D.time)];
 end
-R2=zeros(1,size(woi,1));
-VE=zeros(1,size(woi,1));
 
-if size(woi,1)==1 || ~spm_get_defaults('use_parfor')
-    for w_idx=1:size(woi,1)
-        [F(w_idx), R2(w_idx), VE(w_idx), J_temp{w_idx}, M_temp{w_idx}, ...
-         Cq_temp{w_idx}, U_temp{w_idx}, V_temp{w_idx}, Vq_temp{w_idx}, ...
-         S_temp{w_idx}, It_temp{w_idx}, Ik_temp{w_idx}, ID_temp{w_idx}, ...
-         pst_temp{w_idx}, dct_temp{w_idx}, EBBlayer_diag_temp{w_idx}] = ...
+n_woi = size(woi,1);
+F  = zeros(1,n_woi);
+R2 = zeros(1,n_woi);
+VE = zeros(1,n_woi);
+
+% Remove any stale sliding-window storage fields from a previous inversion.
+stale_fields = {'M_win', 'M_win_files', 'M_win_storage', ...
+                'M_win_variable', 'M_win_dir'};
+for stale_idx = 1:numel(stale_fields)
+    if isfield(inverse, stale_fields{stale_idx})
+        inverse = rmfield(inverse, stale_fields{stale_idx});
+    end
+end
+
+% Disk-backed storage for window-specific inverse operators.
+M_win_files = cell(1,n_woi);
+mwin_dir = '';
+mwin_dir_name = '';
+
+if n_woi > 1
+    [~, data_base, ~] = fileparts(D.fname);
+    mwin_dir_name = sprintf('%s_inv%d_Mwin', data_base, val);
+    mwin_dir = fullfile(D.path, mwin_dir_name);
+
+    if ~exist(mwin_dir, 'dir')
+        [mkdir_ok, mkdir_msg] = mkdir(mwin_dir);
+        if ~mkdir_ok
+            error('Could not create M_win directory %s: %s', ...
+                  mwin_dir, mkdir_msg);
+        end
+    end
+
+    fprintf('Window-specific inverse matrices will be written to %s\n', ...
+            mwin_dir);
+end
+
+% Only the first window needs the additional SPM outputs in the client.
+% Keeping these for every window wastes memory; the only per-window outputs
+% retained in RAM are the small scalar metrics and EBBlayer diagnostics.
+J_first_temp   = cell(1,n_woi);
+M_first_temp   = cell(1,n_woi);
+Cq_first_temp  = cell(1,n_woi);
+U_first_temp   = cell(1,n_woi);
+V_first_temp   = cell(1,n_woi);
+Vq_first_temp  = cell(1,n_woi);
+S_first_temp   = cell(1,n_woi);
+It_first_temp  = cell(1,n_woi);
+Ik_first_temp  = cell(1,n_woi);
+ID_first_temp  = cell(1,n_woi);
+pst_first_temp = cell(1,n_woi);
+dct_first_temp = cell(1,n_woi);
+EBBlayer_diag_temp = cell(1,n_woi);
+
+if n_woi == 1 || ~spm_get_defaults('use_parfor')
+    for w_idx = 1:n_woi
+        [F(w_idx), R2(w_idx), VE(w_idx), J_local, M_local, ...
+         Cq_local, U_local, V_local, Vq_local, S_local, ...
+         It_local, Ik_local, ID_local, pst_local, dct_local, ...
+         EBBlayer_diag_temp{w_idx}] = ...
             process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE, ...
                         Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic, ...
                         vert, nlayers);
+
+        if n_woi > 1
+            mwin_leaf = sprintf('M_win_%04d.mat', w_idx);
+            mwin_full = fullfile(mwin_dir, mwin_leaf);
+            save_mwin_matrix(mwin_full, M_local);
+            M_win_files{w_idx} = fullfile(mwin_dir_name, mwin_leaf);
+        end
+
+        if w_idx == 1
+            J_first_temp{w_idx}   = J_local;
+            M_first_temp{w_idx}   = M_local;
+            Cq_first_temp{w_idx}  = Cq_local;
+            U_first_temp{w_idx}   = U_local;
+            V_first_temp{w_idx}   = V_local;
+            Vq_first_temp{w_idx}  = Vq_local;
+            S_first_temp{w_idx}   = S_local;
+            It_first_temp{w_idx}  = It_local;
+            Ik_first_temp{w_idx}  = Ik_local;
+            ID_first_temp{w_idx}  = ID_local;
+            pst_first_temp{w_idx} = pst_local;
+            dct_first_temp{w_idx} = dct_local;
+        end
+
+        clear J_local M_local Cq_local U_local V_local Vq_local ...
+              S_local It_local Ik_local ID_local pst_local dct_local;
     end
 else
-    % Create a parallel pool if one doesn't exist
+    % Create a parallel pool if one does not exist.  Pool size is controlled
+    % externally so users can choose a worker count appropriate for available
+    % RAM (e.g. parpool(4, 'IdleTimeout', Inf)).
     if isempty(gcp('nocreate'))
         parpool;
     end
 
-    % Process each woi in parallel
-    parfor w_idx=1:size(woi,1)
-        [F(w_idx), R2(w_idx), VE(w_idx), J_temp{w_idx}, M_temp{w_idx},...
-         Cq_temp{w_idx}, U_temp{w_idx}, V_temp{w_idx}, Vq_temp{w_idx},...
-         S_temp{w_idx}, It_temp{w_idx}, Ik_temp{w_idx}, ID_temp{w_idx},...
-         pst_temp{w_idx}, dct_temp{w_idx}, EBBlayer_diag_temp{w_idx}] = ...
-            process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE,...
-                        Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic,...
+    % Each worker writes its own M file, so the full M matrices never have to
+    % accumulate in the MATLAB client.  Unique per-window files also avoid
+    % concurrent writes to one HDF5/MAT file.
+    parfor w_idx = 1:n_woi
+        [F(w_idx), R2(w_idx), VE(w_idx), J_local, M_local, ...
+         Cq_local, U_local, V_local, Vq_local, S_local, ...
+         It_local, Ik_local, ID_local, pst_local, dct_local, ...
+         EBBlayer_diag_temp{w_idx}] = ...
+            process_woi(D, val, w_idx, woi, A, UL, QG, Ns, Ip, Np, QE, ...
+                        Qe0, type, Nmax, Nt, Nr, Han, lpf, hpf, sdv, Ic, ...
                         vert, nlayers);
+
+        if n_woi > 1
+            mwin_leaf = sprintf('M_win_%04d.mat', w_idx);
+            mwin_full = fullfile(mwin_dir, mwin_leaf);
+            save_mwin_matrix(mwin_full, M_local);
+            M_win_files{w_idx} = fullfile(mwin_dir_name, mwin_leaf);
+        else
+            M_win_files{w_idx} = '';
+        end
+
+        % parfor requires sliced assignments for these cells.  Only index 1
+        % contains the large compatibility outputs; all other entries are empty.
+        if w_idx == 1
+            J_first_temp{w_idx}   = J_local;
+            M_first_temp{w_idx}   = M_local;
+            Cq_first_temp{w_idx}  = Cq_local;
+            U_first_temp{w_idx}   = U_local;
+            V_first_temp{w_idx}   = V_local;
+            Vq_first_temp{w_idx}  = Vq_local;
+            S_first_temp{w_idx}   = S_local;
+            It_first_temp{w_idx}  = It_local;
+            Ik_first_temp{w_idx}  = Ik_local;
+            ID_first_temp{w_idx}  = ID_local;
+            pst_first_temp{w_idx} = pst_local;
+            dct_first_temp{w_idx} = dct_local;
+        else
+            J_first_temp{w_idx}   = [];
+            M_first_temp{w_idx}   = [];
+            Cq_first_temp{w_idx}  = [];
+            U_first_temp{w_idx}   = [];
+            V_first_temp{w_idx}   = [];
+            Vq_first_temp{w_idx}  = [];
+            S_first_temp{w_idx}   = [];
+            It_first_temp{w_idx}  = [];
+            Ik_first_temp{w_idx}  = [];
+            ID_first_temp{w_idx}  = [];
+            pst_first_temp{w_idx} = [];
+            dct_first_temp{w_idx} = [];
+        end
     end
 end
 
-if size(woi,1)>1
-    inverse.M_win={};
+% Common first-window SPM inverse fields.
+inverse.type   = type;
+inverse.smooth = s;
+inverse.M      = M_first_temp{1};
+inverse.J      = J_first_temp{1};
+inverse.L      = UL;
+inverse.qC     = Cq_first_temp{1};
+inverse.tempU  = U_first_temp{1};
+inverse.V      = V_first_temp{1};
+inverse.qV     = Vq_first_temp{1};
+inverse.T      = S_first_temp{1};
+inverse.U      = {A};
+inverse.Is     = Is;
+inverse.It     = It_first_temp{1};
+inverse.Ik     = Ik_first_temp{1};
+try
+    inverse.Ic{1} = Ic;
+catch
+    inverse.Ic = Ic;
 end
-% Combine results from parallel processing
-for w_idx=1:size(woi,1)
-    if w_idx == 1
-        inverse.type   = type;
-        inverse.smooth = s;
-        inverse.M      = M_temp{w_idx};
-        inverse.J      = J_temp{w_idx};
-        inverse.L      = UL;
-        inverse.qC     = Cq_temp{w_idx};
-        inverse.tempU  = U_temp{w_idx};
-        inverse.V      = V_temp{w_idx};
-        inverse.qV     = Vq_temp{w_idx};
-        inverse.T      = S_temp{w_idx};
-        inverse.U      = {A};
-        inverse.Is     = Is;
-        inverse.It     = It_temp{w_idx};
-        inverse.Ik     = Ik_temp{w_idx};
-        try
-            inverse.Ic{1} = Ic;
-        catch
-            inverse.Ic = Ic;
-        end
-        inverse.Nd     = Nd;
-        inverse.pst    = pst_temp{w_idx};
-        inverse.dct    = dct_temp{w_idx};
-        inverse.ID     = ID_temp{w_idx};
-    end
-    inverse.F(w_idx)   = F(w_idx);
-    inverse.R2(w_idx)  = R2(w_idx);
-    inverse.VE(w_idx)  = R2(w_idx).*VE(w_idx);
-    if size(woi,1)>1
-        inverse.M_win{w_idx}=M_temp{w_idx};
-    end
-    if strcmp(type, 'EBBlayer')
-        if w_idx == 1
-            inverse.EBBlayer_diag = EBBlayer_diag_temp{w_idx};
-        end
-        if size(woi,1) > 1
-            inverse.EBBlayer_diag_win{w_idx} = EBBlayer_diag_temp{w_idx};
-        end
+inverse.Nd     = Nd;
+inverse.pst    = pst_first_temp{1};
+inverse.dct    = dct_first_temp{1};
+inverse.ID     = ID_first_temp{1};
+
+% Small per-window outputs remain in the main SPM file.
+inverse.F  = F;
+inverse.R2 = R2;
+inverse.VE = R2 .* VE;
+
+% Store external M references rather than the matrices themselves.
+if n_woi > 1
+    inverse.M_win_files = M_win_files;
+    inverse.M_win_storage = 'external_per_window_v7.3';
+    inverse.M_win_variable = 'M_window';
+    inverse.M_win_dir = mwin_dir_name;
+end
+
+if strcmp(type, 'EBBlayer')
+    inverse.EBBlayer_diag = EBBlayer_diag_temp{1};
+    if n_woi > 1
+        inverse.EBBlayer_diag_win = EBBlayer_diag_temp;
     end
 end
+
 inverse.woi    = woi;
 inverse.Ip     = Ip;
 inverse.modality = modalities;
@@ -1512,4 +1880,13 @@ Ik_out = Ik;
 ID_out = ID;
 pst_out = pst;
 dct_out = dct;
+end
+
+% =========================================================================
+% Save one window-specific inverse operator.
+% =========================================================================
+function save_mwin_matrix(fname, M_window)
+
+save(fname, 'M_window', '-v7.3');
+
 end
