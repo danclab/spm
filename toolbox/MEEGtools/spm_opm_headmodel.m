@@ -228,7 +228,9 @@ if do.coreg || do.identity
         nverts = length(D.inv{1}.forward.mesh.vert);
         [L,D] = spm_eeg_lgainmat(D,1:nverts);
     end
-    spm_eeg_inv_checkforward(D,1,1);
+    if ~spm('CmdLine')
+        spm_eeg_inv_checkforward(D,1,1);
+    end
 end
 save(D);
 
