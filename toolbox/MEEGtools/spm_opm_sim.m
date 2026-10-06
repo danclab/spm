@@ -291,7 +291,10 @@ nverts = length(D.inv{1}.forward.mesh.vert);
 if(S.lead)
     [L,D] = spm_eeg_lgainmat(D,1:nverts);
 end
-spm_eeg_inv_checkforward(D,1,1);
+
+if ~spm('CmdLine')
+    spm_eeg_inv_checkforward(D,1,1);
+end
 
 save(D);
 fprintf('%-40s: %30s\n','Completed',spm('time'));

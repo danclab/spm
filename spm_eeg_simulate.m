@@ -227,7 +227,9 @@ else %%% CURRENT DENSITY ON SURFACE SIMULATION
     disp('SIMULATING CURRENT DISTRIBUTIONS ON MESH');
     %% CREATE A NEW FORWARD model for e mesh
     fprintf('Computing Gain Matrix: ')
-    spm_input('Creating gain matrix',1,'d');    % Shows gain matrix computation
+    if ~spm('CmdLine')
+        spm_input('Creating gain matrix',1,'d');    % Shows gain matrix computation
+    end
     
     [L, Dnew] = spm_eeg_lgainmat(Dnew);              % Gain matrix
     if isfield(Dnew.inv{val}.forward,'scale')
