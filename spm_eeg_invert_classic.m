@@ -728,6 +728,11 @@ end
 EBBlayer_sum_pair_topk  = 2;
 EBBlayer_diff_pair_topk = 2;
 
+% Numerically stable DIFF scoring, with legacy mode for reproducibility.
+% 'stable' forms qA-qB in reduced sensor space before quadratic products.
+% 'legacy' retains the original Gram-difference calculation.
+EBBlayer_diff_min_relative_norm = 1e-8;
+
 if strcmp(type, 'EBBlayer')
     try
         EBBlayer_sum_pair_topk = D.inv{val}.inverse.EBBlayer_sum_pair_topk;
@@ -739,6 +744,30 @@ if strcmp(type, 'EBBlayer')
         EBBlayer_diff_pair_topk = D.inv{val}.inverse.EBBlayer_diff_pair_topk;
     catch
         EBBlayer_diff_pair_topk = 2;
+    end
+
+    try
+        EBBlayer_diff_score_method = ...
+            D.inv{val}.inverse.EBBlayer_diff_score_method;
+    catch
+        EBBlayer_diff_score_method = 'stable';
+    end
+    try
+        EBBlayer_diff_min_relative_norm = ...
+            D.inv{val}.inverse.EBBlayer_diff_min_relative_norm;
+    catch
+        EBBlayer_diff_min_relative_norm = 1e-8;
+    end
+
+    if ~ischar(EBBlayer_diff_score_method) || ...
+            ~any(strcmp(EBBlayer_diff_score_method, {'legacy','stable'}))
+        error('EBBlayer_diff_score_method must be legacy or stable.');
+    end
+    if ~isnumeric(EBBlayer_diff_min_relative_norm) || ...
+            ~isscalar(EBBlayer_diff_min_relative_norm) || ...
+            ~isfinite(EBBlayer_diff_min_relative_norm) || ...
+            EBBlayer_diff_min_relative_norm < 0
+        error('EBBlayer_diff_min_relative_norm must be finite and nonnegative.');
     end
 
     if ~isscalar(EBBlayer_sum_pair_topk) || ...
@@ -1052,6 +1081,13 @@ switch(type)
         pair_sum_interior = false(V, nPairs);
         pair_diff         = zeros(V, nPairs);
 
+        % Track which DIFF candidates are explicitly excluded as
+        % numerically degenerate.  The full pair mask is not retained.
+        n_diff_numerically_rejected = 0;
+        n_diff_columns_with_rejection = 0;
+        diff_relative_separation_vertex = [];
+        diff_rejected_vertex = [];
+
         % Numerical tolerance used only to decide whether the quadratic
         % stationary equation has effectively lost its leading term.
         sum_root_tol = 1e-12;
@@ -1063,6 +1099,26 @@ switch(type)
 
             idx_layers = bk + (0:nlayers-1)*V;
             layer_leads = UL * QG(:,idx_layers);
+
+            % Calculate all DIFF scores directly from the lead-field
+            % differences.  This prevents cancellation of nearly equal
+            % Gram products in the fixed qA-qB hypothesis.
+            if strcmp(EBBlayer_diff_score_method, 'stable')
+                [scores_diff, rel_sep, diff_rejected] = ...
+                    spm_ebblayer_diff_scores( ...
+                        layer_leads, InvCov, layer_pairs, tiny, ...
+                        EBBlayer_diff_min_relative_norm);
+                pair_diff(bk,:) = scores_diff;
+                n_diff_numerically_rejected = ...
+                    n_diff_numerically_rejected + nnz(diff_rejected);
+                n_diff_columns_with_rejection = ...
+                    n_diff_columns_with_rejection + any(diff_rejected);
+                if ~isempty(EBBlayer_diag_vertex) && ...
+                        bk == EBBlayer_diag_vertex
+                    diff_relative_separation_vertex = rel_sep(:);
+                    diff_rejected_vertex = diff_rejected(:);
+                end
+            end
 
             G_local = layer_leads' * layer_leads;
             N_local = layer_leads' * InvCov * layer_leads;
@@ -1206,20 +1262,34 @@ switch(type)
                 %
                 % q- = qa - qb
                 %
-                % Calculated from the same local quadratic forms.
+                % Legacy Gram-score path retained for reproducibility
+                % with previously published or compiled DANC versions.
+                % 'stable' already assigned all pair scores above.
                 % ---------------------------------------------------------
-                den = gaa + gbb - 2*gab;
-                num = naa + nbb - 2*nab;
+                if strcmp(EBBlayer_diff_score_method, 'legacy')
+                    den = gaa + gbb - 2*gab;
+                    num = naa + nbb - 2*nab;
 
-                if isfinite(den) && den > tiny && ...
-                        isfinite(num) && num > tiny
-                    val = den / (4 * num);
+                    if isfinite(den) && den > tiny && ...
+                            isfinite(num) && num > tiny
+                        val = den / (4 * num);
 
-                    if isfinite(val) && val > 0
-                        pair_diff(bk,p) = val;
+                        if isfinite(val) && val > 0
+                            pair_diff(bk,p) = val;
+                        end
                     end
                 end
             end
+        end
+
+        if strcmp(EBBlayer_diff_score_method, 'stable')
+            fprintf(['EBBlayer DIFF stable scoring: min relative norm=%.3g; ' ...
+                     'rejected %d candidates across %d columns\n'], ...
+                EBBlayer_diff_min_relative_norm, ...
+                n_diff_numerically_rejected, ...
+                n_diff_columns_with_rejection);
+        else
+            fprintf('EBBlayer DIFF legacy Gram scoring (regression mode)\n');
         end
 
         fprintf( ...
@@ -1374,6 +1444,10 @@ switch(type)
             EBBlayer_diag_out.pair_keep_sum_vertex = pair_keep_diag;
             EBBlayer_diag_out.pair_keep_diff_vertex = pair_keep_diff_diag;
             EBBlayer_diag_out.pair_diff_used_vertex = pair_diff_used_diag;
+            EBBlayer_diag_out.pair_diff_relative_separation_vertex = ...
+                diff_relative_separation_vertex;
+            EBBlayer_diag_out.pair_diff_numerically_rejected_vertex = ...
+                diff_rejected_vertex;
             EBBlayer_diag_out.diag_vertex = EBBlayer_diag_vertex;
             
             mx_diff_used = max(pair_diff_used_diag);
@@ -1643,6 +1717,13 @@ switch(type)
             % Algorithm provenance and tunable TOP-K parameters.
             EBBlayer_diag_out.sum_pair_topk = EBBlayer_sum_pair_topk;
             EBBlayer_diag_out.diff_pair_topk = EBBlayer_diff_pair_topk;
+            EBBlayer_diag_out.diff_score_method = EBBlayer_diff_score_method;
+            EBBlayer_diag_out.diff_min_relative_norm = ...
+                EBBlayer_diff_min_relative_norm;
+            EBBlayer_diag_out.n_diff_numerically_rejected = ...
+                n_diff_numerically_rejected;
+            EBBlayer_diag_out.n_diff_columns_with_rejection = ...
+                n_diff_columns_with_rejection;
             EBBlayer_diag_out.sum_pair_optimization = 'continuous_interior';
             EBBlayer_diag_out.sum_endpoint_exclusion = true;
             EBBlayer_diag_out.sum_root_tolerance = sum_root_tol;
