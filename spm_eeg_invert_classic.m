@@ -322,6 +322,10 @@ Nd    = size(L,2);
 
 fprintf(' - done\n')
 
+% Keep the signed setting: negative smooth requests millimetre-based
+% smoothing.  The magnitude used by the kernel lookup is positive, but
+% saving that magnitude changes the algorithm chosen on reinversion.
+smooth_requested = s;
 if s>=1
     smoothtype='mesh_smooth';
 else
@@ -599,7 +603,7 @@ end
 
 % Common first-window SPM inverse fields.
 inverse.type   = type;
-inverse.smooth = s;
+inverse.smooth = smooth_requested;
 inverse.M      = M_first_temp{1};
 inverse.J      = J_first_temp{1};
 inverse.L      = UL;
